@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>透明背景·点击解锁拖拽动态图表</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            /* 【核心修改】：背景设为透明 */
+            background-color: transparent; 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            user-select: none; 
+        }
+
+        /* 外层包裹 */
+        .chart-wrapper {
+            position: relative;
+            width: 560px; 
+            height: 250px; 
+            margin-left: 60px;  
+            margin-bottom: 40px; 
+            /* 【核心修改】：确保容器也是透明的 */
+            background: transparent; 
+        }
+
+        /* XY轴相交的坐标系 */
+        .axis-system {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border-left: 2px solid #333333;   
+            border-bottom: 2px solid #333333; 
+            display: flex;
+            align-items: flex-end; 
+            padding: 0 5px; 
+            box-sizing: border-box;
+            background: transparent;
+        }
+
+        /* Y轴刻度整体容器 */
+        .y-axis-ticks {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 100%;
+            pointer-events: none; 
+        }
+
+        /* 单个Y轴刻度标签 */
+        .y-tick {
+            position: absolute;
+            left: -50px; 
+            width: 40px;
+            text-align: right;
+            font-size: 12px;
+            color: #666; /* 如果你的实际背景很深，可以把刻度颜色改成 #ccc 或 #fff */
+            transform: translateY(50%); 
+        }
+
+        /* Y轴小刻度线 */
+        .y-tick::after {
+            content: "";
+            position: absolute;
+            right: -10px;
+            top: 50%;
+            width: 6px;
+            height: 1px;
+            background-color: #333; /* 深色背景下可改为 #fff */
+        }
+
+        /* 柱子组合 */
+        .bar-group {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100%;
+            justify-content: flex-end; 
+            position: relative;
+        }
+
+        /* 柱体自身 */
+        .bar {
+            width: 20px; 
+            background: linear-gradient(to top, #2980b9, #3498db);
+            border-radius: 3px 3px 0 0;
+            height: 0px; 
+            will-change: height; 
+            position: relative;
+            transition: background 0.2s ease; 
+        }
+
+        /* 鼠标常规指向柱子时显示淡橙色反馈 */
+        .bar:hover {
+            background: linear-gradient(to top, #e67e22, #f39c12);
+        }
+
+        /* 柱子顶部的百分比数字 */
+        .value-label {
+            position: absolute;
+            top: -20px; 
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 11px; 
+            font-weight: bold;
+            color: #2980b9;
+            white-space: nowrap;
+            opacity: 0; 
+            transition: opacity 0.3s, color 0.2s ease, background-color 0.2s; 
+            cursor: pointer; 
+            padding: 2px 5px; 
+            border-radius: 3px;
+            background-color: transparent; /* 默认文字背景透明 */
+        }
+
+        /* 常规悬停变色 */
+        .bar:hover .value-label {
+            color: #e67e22;
+        }
+
+        /* 当数字被点击激活后的“可调节状态” */
+        .value-label.activated {
+            color: #fff !important;
+            background-color: #d35400 !important; 
+            cursor: ns-resize !important; 
+            box-shadow: 0 0 0 2px rgba(211, 84, 0, 0.4);
+            animation: pulse-border 1.5s infinite; 
+        }
+        
+        /* 激活状态下让柱体维持深橙红色 */
+        .bar.has-active-label {
+            background: linear-gradient(to top, #d35400, #e67e22) !important;
+        }
+
+        @keyframes pulse-border {
+            0% { box-shadow: 0 0 0 0px rgba(211, 84, 0, 0.6); }
+            70% { box-shadow: 0 0 0 5px rgba(211, 84, 0, 0); }
+            100% { box-shadow: 0 0 0 0px rgba(211, 84, 0, 0); }
+        }
+
+        /* X轴可编辑标签文字 */
+        .x-label {
+            position: absolute;
+            bottom: -32px;
+            font-size: 11px; 
+            color: #333; /* 深色背景下可改为 #fff */
+            white-space: nowrap;
+            padding: 2px 3px;
+            border-radius: 3px;
+            outline: none;
+            cursor: pointer;
+            transition: background-color 0.2s, box-shadow 0.2s;
+            background-color: transparent;
+        }
+
+        .x-label:hover { background-color: rgba(0, 0, 0, 0.1); } /* 悬停浅灰色半透明 */
+        .x-label:focus {
+            background-color: rgba(255, 255, 255, 0.9); /* 编辑时提供高亮背景 */
+            color: #333;
+            box-shadow: 0 0 0 2px #3498db;
+            cursor: text;
+        }
+
+        /* 绝对高度下的呼吸动画 */
+        @keyframes gentle-breath-height {
+            0% { height: var(--target-h); }
+            50% { height: calc(var(--target-h) + 5px); } 
+            100% { height: var(--target-h); }
+        }
+
+        .is-breathing {
+            animation: gentle-breath-height 4s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+
+<div class="chart-wrapper">
+    <div class="y-axis-ticks" id="y-ticks"></div>
+    <div class="axis-system" id="chart-grid"></div>
+</div>
+
+<script>
+    const defaultData = [
+        { value: 40, label: "1月" }, { value: 65, label: "2月" },
+        { value: 55, label: "3月" }, { value: 85, label: "4月" },
+        { value: 60, label: "5月" }, { value: 75, label: "6月" },
+        { value: 45, label: "7月" }, { value: 95, label: "8月" },
+        { value: 70, label: "9月" }, { value: 50, label: "10月" },
+        { value: 65, label: "11月" }, { value: 80, label: "12月" }
+    ];
+
+    // 本地存储键名区隔
+    let savedData = localStorage.getItem('bounce_chart_transparent_data');
+    const data = savedData ? JSON.parse(savedData) : defaultData;
+
+    const chartHeight = 250; 
+
+    function saveDataToLocal() {
+        localStorage.setItem('bounce_chart_transparent_data', JSON.stringify(data));
+    }
+
+    function deactivateAllLabels() {
+        document.querySelectorAll('.value-label').forEach(label => {
+            label.classList.remove('activated');
+        });
+        document.querySelectorAll('.bar').forEach(bar => {
+            bar.classList.remove('has-active-label');
+            if (bar.style.height && bar.style.animationName === 'none') {
+                bar.style.animationName = 'gentle-breath-height';
+                bar.classList.add('is-breathing');
+            }
+        });
+    }
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.classList.contains('value-label')) {
+            deactivateAllLabels();
+        }
+    });
+
+    // 1. 生成 Y 轴精准刻度
+    const yTicksContainer = document.getElementById('y-ticks');
+    for (let i = 0; i <= 100; i += 20) {
+        const tick = document.createElement('div');
+        tick.className = 'y-tick';
+        tick.innerText = i;
+        tick.style.bottom = `${i}%`; 
+        yTicksContainer.appendChild(tick);
+    }
+
+    // 2. 生成柱状图结构
+    const chartGrid = document.getElementById('chart-grid');
+    const animQueue = [];
+
+    data.forEach((item, index) => {
+        const group = document.createElement('div');
+        group.className = 'bar-group';
+
+        const bar = document.createElement('div');
+        bar.className = 'bar';
+
+        const valLabel = document.createElement('div');
+        valLabel.className = 'value-label';
+        valLabel.innerText = `${item.value}%`;
+        bar.appendChild(valLabel);
+
+        const xLabel = document.createElement('div');
+        xLabel.className = 'x-label';
+        xLabel.innerText = item.label;
+        xLabel.setAttribute('contenteditable', 'true'); 
+        xLabel.setAttribute('spellcheck', 'false');      
+
+        xLabel.addEventListener('blur', () => {
+            data[index].label = xLabel.innerText;
+            saveDataToLocal();
+        });
+
+        xLabel.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault(); 
+                xLabel.blur();      
+            }
+        });
+
+        valLabel.addEventListener('click', (e) => {
+            e.stopPropagation(); 
+            if (valLabel.classList.contains('activated')) {
+                deactivateAllLabels();
+                return;
+            }
+            deactivateAllLabels(); 
+            valLabel.classList.add('activated');
+            bar.classList.add('has-active-label');
+            bar.classList.remove('is-breathing');
+            bar.style.animationName = 'none';
+        });
+
+        valLabel.addEventListener('mousedown', (e) => {
+            if (!valLabel.classList.contains('activated')) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            const rect = chartGrid.getBoundingClientRect();
+            const axisBottom = rect.bottom;
+
+            function onMouseMove(moveEvent) {
+                let currentPixelHeight = axisBottom - moveEvent.clientY;
+                
+                if (currentPixelHeight < 0) currentPixelHeight = 0;
+                if (currentPixelHeight > chartHeight) currentPixelHeight = chartHeight;
+
+                const currentPercent = Math.round((currentPixelHeight / chartHeight) * 100);
+
+                bar.style.height = `${currentPixelHeight}px`;
+                valLabel.innerText = `${currentPercent}%`;
+
+                data[index].value = currentPercent;
+            }
+
+            function onMouseUp() {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+
+                const finalHeight = (data[index].value / 100) * chartHeight;
+                bar.style.height = `${finalHeight}px`;
+                saveDataToLocal();
+                bar.style.setProperty('--target-h', `${finalHeight}px`);
+            }
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+
+        group.appendChild(bar);
+        group.appendChild(xLabel);
+        chartGrid.appendChild(group);
+
+        const targetPixelHeight = (item.value / 100) * chartHeight;
+
+        animQueue.push({
+            el: bar,
+            labelEl: valLabel,
+            target: targetPixelHeight,
+            current: 0,
+            velocity: 0,
+            index: index
+        });
+    });
+
+    // 3. 物理发动机
+    function springAnimation(item, delay) {
+        setTimeout(() => {
+            const stiffness = 0.12; 
+            const damping = 0.82;   
+
+            item.labelEl.style.opacity = "1";
+
+            function frame() {
+                if(item.el.style.animationName === 'none') return;
+
+                const force = (item.target - item.current) * stiffness;
+                item.velocity = (item.velocity + force) * damping;
+                item.current += item.velocity;
+
+                item.el.style.height = `${item.current}px`;
+
+                if (Math.abs(item.velocity) > 0.02 || Math.abs(item.target - item.current) > 0.02) {
+                    requestAnimationFrame(frame);
+                } else {
+                    item.el.style.height = `${item.target}px`; 
+                    item.el.style.setProperty('--target-h', `${item.target}px`);
+                    item.el.classList.add('is-breathing');
+                    item.el.style.animationDelay = `${item.index * -0.3}s`; 
+                }
+            }
+            requestAnimationFrame(frame);
+        }, delay);
+    }
+
+    // 4. 依次执行出场物理弹跳动画
+    animQueue.forEach((item, index) => {
+        springAnimation(item, index * 100);
+    });
+</script>
+
+</body>
+</html>
